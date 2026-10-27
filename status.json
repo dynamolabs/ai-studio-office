@@ -1,0 +1,11 @@
+{
+  "updatedAt": "2026-10-27T10:00:00Z",
+  "agents": [
+    { "id": "coordinator", "role": "coord", "title": "Coordinator", "status": "working", "note": "Splitting the sprint into tasks", "updated": "2026-10-27T09:58:00Z", "created": "2026-10-27T08:00:00Z", "model": "claude-opus-5-5", "ctxUsed": 90000, "ctxMax": 1000000 },
+    { "id": "design", "role": "thread", "title": "Design: level layouts", "status": "review", "note": "Level 2 layout ready for review", "updated": "2026-10-27T09:40:00Z", "created": "2026-10-27T08:05:00Z", "model": "claude-opus-5-5", "ctxUsed": 120000, "ctxMax": 1000000 },
+    { "id": "code", "role": "thread", "title": "Programming: enemy AI", "status": "working", "note": "Writing the pathfinding code", "updated": "2026-10-27T09:59:00Z", "created": "2026-10-27T08:06:00Z", "model": "claude-sonnet-5-5", "ctxUsed": 300000, "ctxMax": 1000000 },
+    { "id": "qa", "role": "thread", "title": "QA: boss fight", "status": "blocked", "note": "Needs a call on boss difficulty", "updated": "2026-10-27T09:30:00Z", "created": "2026-10-27T08:10:00Z", "model": "claude-sonnet-5-5", "ctxUsed": 60000, "ctxMax": 1000000 },
+    { "id": "audio", "role": "thread", "title": "Audio: title music", "status": "done", "note": "", "updated": "2026-10-27T09:00:00Z", "created": "2026-10-27T08:12:00Z", "model": "claude-haiku-5-5", "ctxUsed": 40000, "ctxMax": 500000 },
+    { "id": "build", "role": "thread", "title": "Web build", "status": "failed", "note": "Bundle step failed", "updated": "2026-10-27T09:20:00Z", "created": "2026-10-27T08:15:00Z", "model": "claude-sonnet-5-5", "ctxUsed": 80000, "ctxMax": 1000000 }
+  ]
+}

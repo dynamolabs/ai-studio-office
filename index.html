@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AI Studio Office</title>
+<meta name="description" content="A 3D office that shows a team of AI agents at work, driven by a simple status.json feed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-screen 3D campus (building + yard + street); mono HUD strips top and bottom; slide-in panel right (bottom sheet on phones). Light theme = day, dark theme = night. */
+:root {
+  --bg: #cfe3ef;
+  --panel: rgba(250, 247, 240, 0.9);
+  --panel-solid: #faf7f0;
+  --line: rgba(40, 32, 20, 0.14);
+  --text: #221c14;
+  --muted: #6c6256;
+  --accent: #d9542b;
+  --working: #2f9e6b;
+  --blocked: #e08a1e;
+  --review: #2f6fd1;
+  --done: #7a7f8c;
+  --failed: #d13b3b;
+  --f-display: "Chakra Petch", "Trebuchet MS", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1320; --panel: rgba(18, 22, 32, 0.88); --panel-solid: #141927; --line: rgba(255, 220, 170, 0.14);
+  --text: #ece5d8; --muted: #a39a8c; --accent: #ffb16e; --working: #5fd49a; --blocked: #ffb347; --review: #7fb8ff; --done: #9a9db0; --failed: #ff6b6b; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e1320; --panel: rgba(18, 22, 32, 0.88); --panel-solid: #141927; --line: rgba(255, 220, 170, 0.14);
+  --text: #ece5d8; --muted: #a39a8c; --accent: #ffb16e; --working: #5fd49a; --blocked: #ffb347; --review: #7fb8ff; --done: #9a9db0; --failed: #ff6b6b; color-scheme: dark; }
+
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--text); font-family: var(--f-mono); overflow: hidden; font-size: 13px; }
+body { margin: 0; }
+button { font: inherit; }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+#stage canvas:active { cursor: grabbing; }
+#stage canvas.pan { cursor: move; }
+
+.bar { position: fixed; left: 0; right: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: none;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.bar > * { pointer-events: auto; }
+.bar.top { top: 0; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+.bar.bottom { bottom: 0; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); justify-content: space-between; }
+.brand { display: flex; align-items: baseline; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; backdrop-filter: blur(8px); }
+.brand h1 { margin: 0; font-family: var(--f-display); font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.brand h1 b { color: var(--accent); }
+.brand span { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; pointer-events: none; }
+.chip { display: inline-flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; backdrop-filter: blur(8px); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.chip.live .dot { background: var(--working); box-shadow: 0 0 8px var(--working); }
+.chip.demo .dot { background: var(--blocked); }
+button.chip { color: var(--text); cursor: pointer; }
+button.chip:hover, button.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint { color: var(--muted); font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+
+.notice { position: fixed; left: 50%; transform: translateX(-50%); top: calc(104px + env(safe-area-inset-top, 0px)); z-index: 6; max-width: min(520px, calc(100% - 32px)); background: var(--panel-solid); border: 1px solid var(--blocked); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
+
+#labels { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
+.lbl { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: auto; cursor: pointer; }
+.lbl .cap { font-style: italic; font-size: 11px; color: var(--text); background: var(--panel-solid); border: 1px dashed var(--line); padding: 2px 7px; border-radius: 4px; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lbl .row { display: flex; white-space: nowrap; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); font-size: 11.5px; }
+.lbl .st { padding: 2px 6px; color: #fff; background: var(--done); font-weight: 500; }
+.lbl .nm { padding: 2px 7px; background: #221c14; color: #f5efe4; font-weight: 600; max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.lbl.boss .nm { background: #3b2412; color: #ffd49a; }
+.lbl.sel .row { outline: 2px solid var(--accent); }
+.s-working .st { background: var(--working); } .s-blocked .st { background: var(--blocked); } .s-review .st { background: var(--review); } .s-done .st { background: var(--done); } .s-failed .st { background: var(--failed); }
+.lbl.far .cap { display: none; }
+
+.panel { position: fixed; z-index: 7; right: 0; top: 0; bottom: 0; width: min(380px, 100%); background: var(--panel-solid); border-left: 1px solid var(--line);
+  padding-top: calc(14px + env(safe-area-inset-top, 0px)); padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: 18px; padding-right: max(18px, env(safe-area-inset-right, 0px));
+  overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.panel header { display: flex; align-items: center; gap: 6px; }
+.tabs { display: flex; gap: 4px; flex: 1; }
+.tabs button { background: none; border: 1px solid transparent; color: var(--muted); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+.iconbtn { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 6px; width: 30px; height: 30px; font-size: 17px; cursor: pointer; flex: none; }
+.crew { display: flex; flex-direction: column; gap: 6px; }
+.crew button { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; text-align: left; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); cursor: pointer; min-width: 0; }
+.crew button:hover, .crew button.sel { border-color: var(--accent); }
+.crew .sw { width: 12px; height: 12px; border-radius: 3px; }
+.crew .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.crew .t small { display: block; color: var(--muted); font-size: 11px; }
+.pill { font-size: 11px; color: #fff; background: var(--done); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tiles div { background: var(--panel-solid); padding: 10px 12px; min-width: 0; }
+.tiles small { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+.tiles strong { display: block; font-family: var(--f-display); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tiles em { display: block; font-style: normal; color: var(--muted); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bars { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; font-size: 12px; }
+.bars i { display: block; height: 8px; background: var(--accent); border-radius: 2px; }
+.bars span:nth-child(3n) { color: var(--muted); font-variant-numeric: tabular-nums; }
+.detail { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.detail .role { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.detail h2 { margin: 0; font-family: var(--f-display); font-size: 18px; line-height: 1.25; text-wrap: balance; overflow-wrap: anywhere; }
+.detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12.5px; }
+.detail dt { color: var(--muted); } .detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 5px; } .meter b { display: block; height: 100%; background: var(--accent); }
+.detail p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+h3 { margin: 0; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+@media (max-width: 640px) {
+  .panel { top: auto; width: 100%; max-height: 64%; border-left: none; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0; padding-left: max(18px, env(safe-area-inset-left, 0px)); }
+  .bar.bottom .hint { display: none; }
+  .notice { top: calc(140px + env(safe-area-inset-top, 0px)); }
+  .brand span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .lbl { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+
+<div class="bar top">
+  <div class="brand"><h1><b>AI Studio</b> / Office</h1><span id="sync">not synced</span></div>
+  <span class="chip" id="mode"><span class="dot"></span><span id="modeText">Connecting…</span></span>
+  <span class="chip">Active <b id="cActive">0/0</b></span>
+  <span class="chip">Waiting on you <b id="cBlocked">0</b></span>
+  <span class="chip">Ready to review <b id="cReview">0</b></span>
+  <span class="spacer"></span>
+  <button class="chip" id="demoBtn" type="button">Demo team</button>
+  <button class="chip" id="panelBtn" type="button" aria-pressed="false">Panel</button>
+</div>
+<div class="notice" id="notice" hidden></div>
+<div class="bar bottom">
+  <span class="hint">Drag to rotate · right-click, two fingers or the Pan button to pan · scroll to zoom · click a character for details</span>
+  <span style="display:flex;gap:8px">
+    <button class="chip" id="panBtn" type="button" aria-pressed="false">✥ Pan</button>
+    <button class="chip" id="resetBtn" type="button">↺ Reset view</button>
+  </span>
+</div>
+
+<aside class="panel" id="panel" hidden>
+  <header>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="crew" type="button">Team</button>
+      <button role="tab" aria-selected="false" data-tab="stats" type="button">Stats</button>
+    </div>
+    <button class="iconbtn" id="panelClose" type="button" aria-label="Close panel">×</button>
+  </header>
+  <section id="tab-crew" style="display:flex;flex-direction:column;gap:14px">
+    <div class="detail" id="detail" hidden></div>
+    <h3>All desks</h3>
+    <div class="crew" id="crewList"></div>
+  </section>
+  <section id="tab-stats" hidden style="display:flex;flex-direction:column;gap:14px">
+    <div class="tiles" id="tiles"></div>
+    <h3>Models in use</h3>
+    <div class="bars" id="modelBars"></div>
+    <h3>Context per desk</h3>
+    <div class="bars" id="ctxBars"></div>
+  </section>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const STATUS = {
+    working: { label: "Working", color: "#2f9e6b", cls: "s-working", act: ["Typing code", "Working on a task", "Writing a doc"] },
+    blocked: { label: "Waiting", color: "#e08a1e", cls: "s-blocked", act: ["Waiting for your answer in the meeting room"] },
+    review:  { label: "Review", color: "#2f6fd1", cls: "s-review", act: ["Result is ready for you to check"] },
+    done:    { label: "Done", color: "#7a7f8c", cls: "s-done", act: [] },
+    failed:  { label: "Failed", color: "#d13b3b", cls: "s-failed", act: ["Grabbing a drink after a failure"] },
+    idle:    { label: "Idle", color: "#7a7f8c", cls: "s-done", act: [] },
+  };
+  const normStatus = (b) => {
+    const s = String(b || "").toLowerCase();
+    if (s.includes("work") || s === "running") return "working";
+    if (s.includes("block") || s.includes("requires_action")) return "blocked";
+    if (s.includes("review")) return "review";
+    if (s.includes("complet") || s === "done" || s.includes("stop")) return "done";
+    if (s.includes("fail") || s.includes("error")) return "failed";
+    return "idle";
+  };
+  const hashHue = (str) => { let h = 0; for (const ch of String(str)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
+
+  // ---------- data ----------
+  const live = new Map();
+  let demoOn = false, liveOk = false, lastSync = null;
+  const DEMO = [
+    { id: "d-coord", role: "coord", title: "Coordinator", status: "working", note: "Handing out tasks to each team", model: "claude-opus-5-5", ctxUsed: 120000, ctxMax: 500000 },
+    { id: "d-1", role: "thread", title: "Game design: arcade shooter", status: "review", note: "Design doc ready for review", model: "claude-opus-5-5", ctxUsed: 80000, ctxMax: 500000 },
+    { id: "d-2", role: "thread", title: "Programming: ship movement", status: "working", note: "Writing Phaser code", model: "claude-sonnet-5-5", ctxUsed: 210000, ctxMax: 500000 },
+    { id: "d-3", role: "thread", title: "Art: sprite placeholder", status: "working", note: "Drawing enemy sprites", model: "claude-sonnet-5-5", ctxUsed: 60000, ctxMax: 500000 },
+    { id: "d-4", role: "thread", title: "QA: level 1 tests", status: "blocked", note: "Waiting for a difficulty decision", model: "claude-sonnet-5-5", ctxUsed: 45000, ctxMax: 500000 },
+    { id: "d-5", role: "thread", title: "Audio: sound effects", status: "done", note: "", model: "claude-haiku-5-5", ctxUsed: 30000, ctxMax: 500000 },
+    { id: "d-6", role: "thread", title: "Mobile build", status: "failed", note: "Small-screen test failed", model: "claude-sonnet-5-5", ctxUsed: 150000, ctxMax: 500000 },
+    { id: "d-7", role: "thread", title: "Research similar games", status: "done", note: "", model: "claude-haiku-5-5", ctxUsed: 20000, ctxMax: 500000 },
+    { id: "d-8", role: "thread", title: "Menus and UI", status: "done", note: "", model: "claude-sonnet-5-5", ctxUsed: 70000, ctxMax: 500000 },
+  ];
+  function agentsNow() {
+    if (demoOn || !liveOk) return DEMO;
+    return [...live.values()].sort((a, b) => (a.role === "coord" ? -1 : b.role === "coord" ? 1 : String(a.created).localeCompare(String(b.created))));
+  }
+
+  // ---------- renderer / scene ----------
+  const stage = document.getElementById("stage");
+  const isMobile = (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || (navigator.hardwareConcurrency || 8) <= 4;
+  let quality = isMobile ? "low" : "high";
+  const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 1.5));
+  renderer.shadowMap.enabled = !isMobile; renderer.shadowMap.type = THREE.PCFShadowMap; renderer.shadowMap.autoUpdate = false;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+  const hemi = new THREE.HemisphereLight("#bfd8ff", "#5a4a30", 0.6); scene.add(hemi);
+  const sun = new THREE.DirectionalLight("#fff1d6", 1.0); sun.position.set(18, 30, 14); sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 90 }); scene.add(sun);
+
+  const M = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.85 }, extra || {}));
+  const mats = {
+    grass: M("#6fae4e"), path: M("#c9bfae"), road: M("#3b3c42", { roughness: 1 }), curb: M("#b9b3a6"),
+    wallOut: M("#e6ded0"), wallIn: M("#efe8db"), wallTop: M("#d7cebd"), floor: null, floorLounge: M("#8e9bb0"), floorGame: M("#3e4f78"), floorPantry: M("#d9d2c4"),
+    desk: M("#d9c3a0", { roughness: 0.6 }), bossDesk: M("#6b4630", { roughness: 0.55 }), dark: M("#2b2e36", { roughness: 0.5, metalness: 0.3 }), monitor: M("#1a1d24", { roughness: 0.4 }),
+    chair: M("#3b4150"), sofa: M("#4e6a9c"), rug: M("#9c4a3a"), wood: M("#8b5a3c"), glass: new THREE.MeshPhysicalMaterial({ color: "#9fd3ff", transparent: true, opacity: 0.22, roughness: 0.1, metalness: 0 }),
+    leaf: M("#4e8f45", { flatShading: true }), leaf2: M("#3f7d4f", { flatShading: true }), trunk: M("#6b4a2e"), lamp: M("#2a2a2e", { metalness: 0.5 }),
+    skin: M("#e8b98f"), white: M("#f3efe6"), red: M("#d13b3b"), blue: M("#2f6fd1"), green: M("#2f9e6b"), yellow: M("#ffcf4a"), cart: M("#d9542b"),
+  };
+  function plankTexture() {
+    const c = document.createElement("canvas"); c.width = c.height = 256; const g = c.getContext("2d");
+    for (let i = 0; i < 8; i++) { g.fillStyle = `hsl(30, 45%, ${44 + (i * 37 % 9)}%)`; g.fillRect(0, i * 32, 256, 32);
+      g.fillStyle = "rgba(0,0,0,0.2)"; g.fillRect(0, i * 32 + 31, 256, 1); g.fillRect((i * 97) % 256, i * 32, 1, 32); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(10, 5); t.encoding = THREE.sRGBEncoding; return t;
+  }
+  mats.floor = new THREE.MeshStandardMaterial({ map: plankTexture(), roughness: 0.8 });
+  const box = (w, h, d, mat, x, y, z, parent) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; (parent || scene).add(m); return m; };
+  const cyl = (rt, rb, h, mat, x, y, z, parent, seg) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 10), mat); m.position.set(x, y, z); m.castShadow = true; (parent || scene).add(m); return m; };
+
+  // ---- grounds ----
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), mats.grass); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  const pathStrip = new THREE.Mesh(new THREE.PlaneGeometry(60, 4), mats.path); pathStrip.rotation.x = -Math.PI / 2; pathStrip.position.set(0, 0.01, 11); pathStrip.receiveShadow = true; scene.add(pathStrip);
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(160, 8), mats.road); road.rotation.x = -Math.PI / 2; road.position.set(0, 0.01, 17); road.receiveShadow = true; scene.add(road);
+  for (let x = -78; x < 80; x += 4) { const d = new THREE.Mesh(new THREE.PlaneGeometry(2, 0.18), mats.white); d.rotation.x = -Math.PI / 2; d.position.set(x, 0.02, 17); scene.add(d); }
+  box(160, 0.15, 0.3, mats.curb, 0, 0.07, 13);
+  // building: footprint x -18..18, z -8..8 ; walls 2.3 high, open top
+  const WH = 2.3;
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(36.6, 0.3, 16.6), mats.wallTop); slab.position.y = 0.05; slab.receiveShadow = true; scene.add(slab);
+  const floorW = new THREE.Mesh(new THREE.PlaneGeometry(22, 16), mats.floor); floorW.rotation.x = -Math.PI / 2; floorW.position.set(-7, 0.21, 0); floorW.receiveShadow = true; scene.add(floorW);
+  const roomFloor = (w, d, x, z, mat) => { const f = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat); f.rotation.x = -Math.PI / 2; f.position.set(x, 0.21, z); f.receiveShadow = true; scene.add(f); };
+  roomFloor(8, 8, 8, -4, mats.floor); roomFloor(8, 8, 8, 4, mats.floorLounge); roomFloor(6, 8, 15, -4, mats.floorGame); roomFloor(6, 8, 15, 4, mats.floorPantry);
+  const wall = (w, d, x, z, mat, h) => box(w, h || WH, d, mat || mats.wallOut, x, (h || WH) / 2 + 0.2, z);
+  wall(36.3, 0.3, 0, -8.15); wall(0.3, 16.6, -18.15, 0); wall(0.3, 16.6, 18.15, 0);
+  // front wall in two pieces, leaving the entrance open
+  wall(15, 0.3, -10.5, 8.15); wall(17.3, 0.3, 9.35, 8.15); box(6.6, 0.25, 1.2, mats.wallTop, -1.3, 0.1, 8.6); // doorway + step
+  // internal partitions
+  wall(0.2, 16, 4, 0, mats.wallIn); wall(0.2, 8, 12, -4, mats.glass); wall(8, 0.2, 8, 0, mats.glass); wall(6, 0.2, 15, 0, mats.wallIn); wall(0.2, 8, 12, 4, mats.wallIn);
+  // windows on back wall (frames)
+  for (let x = -15; x <= 15; x += 6) { box(3, 1.3, 0.1, mats.glass, x, 1.5, -8.0); box(3.2, 0.1, 0.14, mats.dark, x, 2.2, -8.0); box(3.2, 0.1, 0.14, mats.dark, x, 0.85, -8.0); }
+  // sign
+  (function sign() {
+    const c = document.createElement("canvas"); c.width = 640; c.height = 100; const g = c.getContext("2d");
+    const draw = () => { g.clearRect(0, 0, 640, 100); g.fillStyle = "#d9542b"; g.font = "700 60px 'Chakra Petch', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("AI STUDIO", 320, 52); t.needsUpdate = true; };
+    const t = new THREE.CanvasTexture(c);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(7, 1.1), new THREE.MeshBasicMaterial({ map: t, transparent: true })); m.position.set(-10.5, 1.6, 8.32); scene.add(m);
+    draw(); document.fonts && document.fonts.ready.then(draw);
+  })();
+
+  // ---- furniture ----
+  const extras = [];
+  function plant(x, z) { cyl(0.3, 0.24, 0.5, mats.wood, x, 0.45, z); const l = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 0), mats.leaf2); l.position.set(x, 1.1, z); l.castShadow = true; scene.add(l); }
+  [[-17, -7], [-17, 7], [3, -7], [3, 7], [5, 7], [17, 7]].forEach(p => plant(...p));
+  function tree(x, z, kind) {
+    cyl(0.18, 0.25, 1.6, mats.trunk, x, 0.8, z, null, 7);
+    if (kind) { for (let i = 0; i < 3; i++) { const c = new THREE.Mesh(new THREE.ConeGeometry(1.3 - i * 0.3, 1.4, 7), i % 2 ? mats.leaf2 : mats.leaf); c.position.set(x, 1.9 + i * 0.9, z); c.castShadow = true; scene.add(c); } }
+    else { const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), mats.leaf); b.position.set(x, 2.6, z); b.castShadow = true; scene.add(b); const b2 = new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, 0), mats.leaf2); b2.position.set(x + 0.7, 2.0, z + 0.4); b2.castShadow = true; scene.add(b2); }
+  }
+  [[-24, -6, 0], [-23, 4, 1], [-26, 10, 0], [24, -5, 1], [25, 5, 0], [23, 10, 1], [-8, -13, 0], [4, -14, 1], [14, -13, 0], [-20, -12, 1], [20, -12, 0], [30, 0, 0], [-30, 1, 1]].forEach(p => tree(...p));
+  const lamps = [];
+  function streetLamp(x) { cyl(0.06, 0.08, 3.2, mats.lamp, x, 1.6, 12.6); box(0.9, 0.06, 0.06, mats.lamp, x + 0.45, 3.2, 12.6); const head = box(0.3, 0.12, 0.2, mats.white, x + 0.85, 3.15, 12.6); lamps.push({ head }); }
+  [-14, -2, 10].forEach(streetLamp);
+  // street food cart by the road
+  (function cart() { const g = new THREE.Group(); g.position.set(-23.5, 0, 12.5);
+    box(1.6, 1.0, 0.9, mats.cart, 0, 0.9, 0, g); box(1.8, 0.08, 1.1, mats.wood, 0, 1.45, 0, g); box(1.9, 0.06, 1.3, mats.red, 0, 2.5, 0, g);
+    [[-0.8, -0.5], [0.8, -0.5], [-0.8, 0.5], [0.8, 0.5]].forEach(([x, z]) => cyl(0.03, 0.03, 1.1, mats.dark, x, 2.0, z, g));
+    [[-0.55, 0.55], [0.55, 0.55]].forEach(([x, z]) => { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.08, 12), mats.dark); w.rotation.x = Math.PI / 2; w.position.set(x, 0.3, z); g.add(w); });
+    cyl(0.3, 0.3, 0.35, mats.white, 0, 1.65, 0, g); scene.add(g);
+    // the seller
+    const seller = makeFigure(hashHue("street vendor")); seller.g.position.set(-23.5, 0, 13.6); seller.g.rotation.y = Math.PI; scene.add(seller.g); extras.push(seller); })();
+
+  // workspace desks (threads) + boss desk
+  const DESK_SLOTS = []; for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) DESK_SLOTS.push({ x: -15.5 + c * 3.6, z: -5.0 + r * 4.2 });
+  cyl(0.9, 0.9, 0.08, mats.wood, -9, 0.95, 5.5, null, 16); cyl(0.12, 0.12, 0.9, mats.dark, -9, 0.6, 5.5); // round table for the team
+  const BOSS = { x: 0.5, z: -5.0 };
+  const deskMeshes = new Map();
+  function buildDesk(slot, boss) {
+    const g = new THREE.Group(); g.position.set(slot.x, 0.2, slot.z); const s = boss ? 1.2 : 1;
+    box(2.2 * s, 0.1, 1.0 * s, boss ? mats.bossDesk : mats.desk, 0, 0.95, 0, g);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => box(0.08, 0.9, 0.08, mats.dark, x * 1.0 * s, 0.45, z * 0.42 * s, g));
+    box(0.9, 0.55, 0.05, mats.monitor, 0, 1.4, 0.2, g); box(0.08, 0.3, 0.08, mats.dark, 0, 1.12, 0.2, g);
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.47), new THREE.MeshBasicMaterial({ color: "#1b2230" })); scr.position.set(0, 1.4, 0.17); scr.rotation.y = Math.PI; g.add(scr);
+    box(0.7, 0.03, 0.22, mats.dark, 0, 1.02, -0.2, g); cyl(0.07, 0.06, 0.16, mats.white, 0.75 * s, 1.08, -0.1, g);
+    box(0.6, 0.08, 0.6, mats.chair, 0, 0.5, -0.95, g); box(0.6, 0.6, 0.08, mats.chair, 0, 0.85, -1.25, g); cyl(0.04, 0.04, 0.45, mats.dark, 0, 0.25, -0.95, g);
+    scene.add(g); return { g, scr };
+  }
+  DESK_SLOTS.forEach((s, i) => deskMeshes.set("desk" + i, buildDesk(s, false)));
+  deskMeshes.set("boss", buildDesk(BOSS, true));
+  box(2.4, 1.6, 0.4, mats.wood, -17.7, 1.0, 2); for (let i = 0; i < 3; i++) box(2.2, 0.05, 0.3, mats.desk, -17.7, 0.5 + i * 0.45, 2.02); // bookshelf
+  // meeting room: table + chairs
+  box(3.2, 0.1, 1.6, mats.wood, 8, 0.95, -4); cyl(0.5, 0.6, 0.85, mats.dark, 8, 0.6, -4);
+  const MEET_SLOTS = [{ x: 6.6, z: -5.3, ry: Math.PI * 0.75 }, { x: 8, z: -5.4, ry: Math.PI }, { x: 9.4, z: -5.3, ry: Math.PI * 1.25 }, { x: 6.6, z: -2.7, ry: Math.PI * 0.25 }, { x: 8, z: -2.6, ry: 0 }, { x: 9.4, z: -2.7, ry: -Math.PI * 0.25 }];
+  MEET_SLOTS.forEach(s => { box(0.5, 0.08, 0.5, mats.chair, s.x, 0.5, s.z + (s.z < -4 ? -0.1 : 0.1)); });
+  box(2.4, 1.4, 0.08, mats.white, 8, 1.5, -7.9); // whiteboard
+  // lounge: sofa, rug, tv, coffee table
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(5, 3.5), mats.rug); rug.rotation.x = -Math.PI / 2; rug.position.set(8, 0.22, 4); rug.receiveShadow = true; scene.add(rug);
+  box(3.0, 0.5, 1.0, mats.sofa, 8, 0.45, 5.6); box(3.0, 0.6, 0.3, mats.sofa, 8, 0.95, 6.05); box(0.3, 0.6, 1.0, mats.sofa, 6.35, 0.75, 5.6); box(0.3, 0.6, 1.0, mats.sofa, 9.65, 0.75, 5.6);
+  box(1.4, 0.06, 0.7, mats.wood, 8, 0.6, 4.0); box(1.8, 1.0, 0.08, mats.monitor, 8, 1.3, 1.5); box(0.9, 0.5, 0.9, mats.cart, 5.4, 0.45, 2.3); // armchair
+  const SOFA_SLOTS = [{ x: 7.1, z: 5.5, ry: Math.PI }, { x: 8.9, z: 5.5, ry: Math.PI }, { x: 5.4, z: 2.3, ry: Math.PI * 0.5 }];
+  // game room: ping-pong + arcade
+  box(2.7, 0.06, 1.5, mats.green, 15, 0.95, -4); box(2.7, 0.2, 0.03, mats.white, 15, 1.05, -4); box(0.1, 0.9, 1.2, mats.dark, 15, 0.5, -4);
+  const PONG = [{ x: 15, z: -5.8, ry: Math.PI }, { x: 15, z: -2.2, ry: 0 }];
+  box(0.9, 1.8, 0.7, mats.blue, 13.0, 1.1, -7.3); box(0.7, 0.5, 0.05, mats.yellow, 13.0, 1.5, -6.92); box(0.9, 1.8, 0.7, mats.red, 17.0, 1.1, -7.3); box(0.7, 0.5, 0.05, mats.yellow, 17.0, 1.5, -6.92);
+  const ARCADE = [{ x: 13.0, z: -6.2, ry: Math.PI }, { x: 17.0, z: -6.2, ry: Math.PI }];
+  // pantry: counter, water dispenser, fridge
+  box(5.4, 0.9, 0.7, mats.white, 15, 0.65, 7.3); box(5.6, 0.06, 0.8, mats.wood, 15, 1.13, 7.3); box(0.9, 1.9, 0.8, mats.white, 12.8, 1.15, 4.6);
+  box(0.4, 1.0, 0.4, mats.white, 17.2, 0.7, 3.0); const jug = cyl(0.22, 0.22, 0.55, mats.glass, 17.2, 1.5, 3.0, null, 12);
+  const PANTRY = [{ x: 16.3, z: 3.2, ry: -Math.PI * 0.5 }, { x: 14.5, z: 6.2, ry: 0 }, { x: 13.9, z: 4.6, ry: Math.PI * 0.5 }];
+  const WANDER = [{ x: -6, z: 6.5, ry: 0 }, { x: 0, z: 10.8, ry: Math.PI * 0.5 }, { x: 10, z: 10.8, ry: -Math.PI * 0.5 }];
+
+  // ---- figures ----
+  function makeFigure(hue, boss) {
+    const g = new THREE.Group();
+    const shirt = M(`hsl(${hue}, 55%, ${boss ? 48 : 52}%)`), pants = M(`hsl(${(hue + 200) % 360}, 25%, 30%)`), hair = M(`hsl(${(hue + 40) % 360}, 30%, 18%)`);
+    const legL = box(0.2, 0.55, 0.22, pants, -0.13, 0, 0, g); legL.geometry.translate(0, -0.275, 0); legL.position.y = 0.55;
+    const legR = box(0.2, 0.55, 0.22, pants, 0.13, 0, 0, g); legR.geometry.translate(0, -0.275, 0); legR.position.y = 0.55;
+    const body = box(0.5, 0.6, 0.3, shirt, 0, 0.85, 0, g);
+    const head = box(0.44, 0.44, 0.44, mats.skin, 0, 1.4, 0, g);
+    box(0.46, 0.14, 0.46, hair, 0, 1.58, 0, g); box(0.46, 0.2, 0.08, hair, 0, 1.45, -0.2, g);
+    box(0.06, 0.05, 0.02, mats.dark, -0.1, 1.42, 0.22, g); box(0.06, 0.05, 0.02, mats.dark, 0.1, 1.42, 0.22, g); // eyes face +z
+    const mkArm = (x) => { const p = new THREE.Group(); p.position.set(x, 1.1, 0); const a = box(0.16, 0.55, 0.18, shirt, 0, -0.275, 0, p); box(0.14, 0.12, 0.16, mats.skin, 0, -0.58, 0, p); g.add(p); return p; };
+    const armL = mkArm(-0.33), armR = mkArm(0.33);
+    if (boss) { const crown = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.16, 5), M("#ffcf4a", { metalness: 0.6, roughness: 0.3 })); crown.position.y = 1.75; g.add(crown); }
+    const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ map: null, transparent: true })); bubble.scale.set(0.5, 0.5, 0.5); bubble.position.set(0.4, 2.1, 0); bubble.visible = false; g.add(bubble);
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 1.2), new THREE.MeshBasicMaterial({ visible: false })); hit.position.y = 1.0; g.add(hit);
+    return { g, legL, legR, body, head, armL, armR, bubble, hit, phase: Math.random() * 6 };
+  }
+  function bubbleTexture(text, color) {
+    const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d");
+    g.fillStyle = color; g.beginPath(); g.arc(64, 56, 44, 0, Math.PI * 2); g.fill(); g.beginPath(); g.moveTo(50, 94); g.lineTo(64, 122); g.lineTo(76, 94); g.fill();
+    g.fillStyle = "#14171e"; g.font = "700 62px 'Chakra Petch', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, 64, 60);
+    return new THREE.CanvasTexture(c);
+  }
+  const bubbles = { blocked: bubbleTexture("!", "#ffb347"), review: bubbleTexture("✓", "#7fb8ff"), failed: bubbleTexture("×", "#ff6b6b") };
+
+  // ---- agents in the world ----
+  let firstLayout = true;
+  const agents = new Map(); // id -> {fig, agent, target:{x,z,ry}, pose, lbl, desk}
+  const pickables = [];
+  const labelsEl = document.getElementById("labels");
+  function spawn(a, i) {
+    const boss = a.role === "coord";
+    const fig = makeFigure(boss ? 22 : hashHue(a.id), boss);
+    fig.hit.userData.id = a.id; pickables.push(fig.hit);
+    fig.g.position.set(-1.3, 0.2, 10.5); // walks in from the entrance
+    scene.add(fig.g);
+    const lbl = document.createElement("div"); lbl.className = "lbl" + (boss ? " boss" : "");
+    lbl.innerHTML = '<span class="cap"></span><span class="row"><span class="st"></span><span class="nm"></span></span>';
+    lbl.addEventListener("click", () => select(a.id)); labelsEl.appendChild(lbl);
+    return { fig, agent: a, target: { x: -1.3, z: 10.5, ry: 0 }, pose: "walk", lbl, cur: { ry: 0 }, idleSpot: null, idleTimer: 0 };
+  }
+  function targetFor(rec, idx, counters) {
+    const a = rec.agent, boss = a.role === "coord";
+    if (a.status === "working" || a.status === "review") {
+      const slot = boss ? BOSS : DESK_SLOTS[idx % DESK_SLOTS.length]; rec.desk = boss ? "boss" : "desk" + (idx % DESK_SLOTS.length);
+      return { x: slot.x, z: slot.z - (boss ? 1.1 : 0.95), ry: 0, pose: a.status === "working" ? "type" : "review" };
+    }
+    if (a.status === "blocked") { const s = MEET_SLOTS[counters.meet++ % MEET_SLOTS.length]; return { x: s.x, z: s.z, ry: s.ry, pose: "wave" }; }
+    if (a.status === "failed") { const s = PANTRY[counters.pantry++ % PANTRY.length]; return { x: s.x, z: s.z, ry: s.ry, pose: "slump" }; }
+    // done / idle: lounge, game room, wander
+    if (!rec.idleSpot || rec.idleTimer <= 0) {
+      const pool = [...SOFA_SLOTS.map(s => ({ ...s, pose: "sit" })), ...PONG.map(s => ({ ...s, pose: "pong" })), ...ARCADE.map(s => ({ ...s, pose: "arcade" })), ...WANDER.map(s => ({ ...s, pose: "stand" })), { ...PANTRY[1], pose: "stand" }];
+      const taken = new Set([...agents.values()].filter(r => r !== rec && r.idleSpot).map(r => r.idleSpot.key));
+      const free = pool.map((s, k) => ({ ...s, key: "i" + k })).filter(s => !taken.has(s.key));
+      const pick = free.length ? free[(counters.idle++ * 7 + idx) % free.length] : { ...WANDER[0], key: "w", pose: "stand" };
+      rec.idleSpot = pick; rec.idleTimer = 25 + Math.random() * 40;
+    }
+    const s = rec.idleSpot; return { x: s.x, z: s.z, ry: s.ry, pose: s.pose };
+  }
+  const ACT = { type: ["Typing code", "Working on a task", "Writing a doc"], review: ["Result ready for you"], wave: ["Waiting for your answer"], slump: ["Taking a break after a failure"], sit: ["Relaxing in the lounge"], pong: ["Playing ping-pong"], arcade: ["Playing arcade games"], stand: ["Taking a short walk"] };
+  const BOSS_ACT = { type: "Handing out tasks" };
+
+  function layout() {
+    const list = agentsNow(); const ids = new Set(list.map(a => a.id));
+    for (const [id, r] of agents) if (!ids.has(id)) { scene.remove(r.fig.g); r.lbl.remove(); pickables.splice(pickables.indexOf(r.fig.hit), 1); agents.delete(id); }
+    const counters = { meet: 0, pantry: 0, idle: 0 };
+    let threadIdx = 0, active = 0, blocked = 0, review = 0;
+    list.forEach(a => {
+      let rec = agents.get(a.id); const i = a.role === "coord" ? -1 : threadIdx++;
+      if (!rec) { rec = spawn(a, i); agents.set(a.id, rec); }
+      const changed = rec.agent.status !== a.status; rec.agent = a;
+      if (changed) rec.idleSpot = null;
+      const t = targetFor(rec, Math.max(0, i), counters); rec.target = t; rec.poseTarget = t.pose;
+      if (firstLayout) { rec.fig.g.position.set(t.x, 0.2, t.z); rec.cur.ry = t.ry; }
+      if (a.status === "working" || a.status === "review" || a.status === "blocked") active++;
+      if (a.status === "blocked") blocked++; if (a.status === "review") review++;
+      const S = STATUS[a.status] || STATUS.idle;
+      rec.lbl.className = "lbl " + S.cls + (a.role === "coord" ? " boss" : "") + (selected === a.id ? " sel" : "");
+      rec.lbl.querySelector(".st").textContent = S.label;
+      rec.lbl.querySelector(".nm").textContent = a.role === "coord" ? "★ " + a.title : a.title;
+      const act = a.note || (a.role === "coord" && BOSS_ACT[t.pose]) || (ACT[t.pose] || [""])[a.id.length % (ACT[t.pose] || [""]).length];
+      rec.lbl.querySelector(".cap").textContent = act; rec.lbl.querySelector(".cap").hidden = !act;
+      const b = bubbles[a.status]; rec.fig.bubble.visible = !!b; if (b) rec.fig.bubble.material.map = b;
+      const d = rec.desk && deskMeshes.get(rec.desk); if (d) d.scr.material.color.set(a.status === "working" ? "#5fd49a" : a.status === "review" ? "#7fb8ff" : "#1b2230");
+    });
+    // desks nobody uses go dark
+    const used = new Set([...agents.values()].filter(r => r.agent.status === "working" || r.agent.status === "review").map(r => r.desk));
+    for (const [k, d] of deskMeshes) if (!used.has(k)) d.scr.material.color.set("#1b2230");
+    firstLayout = false;
+    $("cActive").textContent = `${active}/${list.length}`; $("cBlocked").textContent = blocked; $("cReview").textContent = review;
+    renderPanel();
+  }
+
+  // ---- camera controls ----
+  const HOME = { theta: 0.35, phi: 1.0, r: 37, tx: 1, tz: -2 };
+  const orbit = { ...HOME, target: new THREE.Vector3(HOME.tx, 0.5, HOME.tz) };
+  function placeCamera() { const { theta, phi, r, target } = orbit; camera.position.set(target.x + r * Math.sin(phi) * Math.sin(theta), target.y + r * Math.cos(phi), target.z + r * Math.sin(phi) * Math.cos(theta)); camera.lookAt(target); }
+  const cv = renderer.domElement, pointers = new Map(); let pinch0 = 0, moved = 0, panMode = false;
+  const pan = (dx, dy) => { const f = orbit.r * 0.0016; const fx = new THREE.Vector3(Math.sin(orbit.theta), 0, Math.cos(orbit.theta)); const rx = new THREE.Vector3(fx.z, 0, -fx.x);
+    orbit.target.addScaledVector(rx, -dx * f).addScaledVector(fx, -dy * f); orbit.target.x = Math.max(-40, Math.min(40, orbit.target.x)); orbit.target.z = Math.max(-25, Math.min(25, orbit.target.z)); };
+  cv.addEventListener("contextmenu", e => e.preventDefault());
+  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button }); moved = 0;
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); } });
+  cv.addEventListener("pointermove", e => {
+    const p = pointers.get(e.pointerId); if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y; moved += Math.abs(dx) + Math.abs(dy);
+    if (pointers.size === 1) { if (p.b === 2 || panMode || e.shiftKey) pan(dx, dy); else { orbit.theta -= dx * 0.005; orbit.phi = Math.min(1.42, Math.max(0.3, orbit.phi - dy * 0.004)); } }
+    else if (pointers.size === 2) { const vals = [...pointers.values()]; const other = vals.find(q => q !== p);
+      const d = Math.hypot(p.x + dx - other.x, p.y + dy - other.y); if (pinch0) orbit.r = Math.min(70, Math.max(8, orbit.r * pinch0 / d)); pinch0 = d; pan(dx / 2, dy / 2); }
+    p.x = e.clientX; p.y = e.clientY;
+  });
+  const up = e => { if (pointers.size === 1 && moved < 6 && e.button === 0) pick(e); pointers.delete(e.pointerId); pinch0 = 0; };
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", e => { pointers.delete(e.pointerId); pinch0 = 0; });
+  cv.addEventListener("wheel", e => { e.preventDefault(); orbit.r = Math.min(70, Math.max(8, orbit.r * (1 + Math.sign(e.deltaY) * 0.08))); }, { passive: false });
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function pick(e) { const r = cv.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects(pickables)[0]; if (hit) select(hit.object.userData.id); }
+  $("resetBtn").addEventListener("click", () => { Object.assign(orbit, { theta: HOME.theta, phi: HOME.phi, r: HOME.r }); orbit.target.set(HOME.tx, 0.5, HOME.tz); resize(); });
+  $("panBtn").addEventListener("click", () => { panMode = !panMode; $("panBtn").setAttribute("aria-pressed", panMode); cv.classList.toggle("pan", panMode); });
+
+  // ---- panel ----
+  let selected = null, tab = "crew";
+  function $(id) { return document.getElementById(id); }
+  const fmtTime = iso => { if (!iso) return "–"; const d = new Date(iso); if (isNaN(d)) return "–"; const mins = Math.round((Date.now() - d) / 60000);
+    const rel = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} d ago`;
+    return `${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} (${rel})`; };
+  function select(id) { selected = id; tab = "crew"; openPanel(true); layout(); const r = agents.get(id); if (r) { orbit.target.x += (r.fig.g.position.x - orbit.target.x) * 0.6; orbit.target.z += (r.fig.g.position.z - orbit.target.z) * 0.6; } }
+  function openPanel(on) { $("panel").hidden = !on; $("panelBtn").setAttribute("aria-pressed", on); }
+  $("panelBtn").addEventListener("click", () => { openPanel($("panel").hidden); renderPanel(); });
+  $("panelClose").addEventListener("click", () => openPanel(false));
+  document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => { tab = b.dataset.tab; renderPanel(); }));
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  function renderPanel() {
+    document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+    $("tab-crew").hidden = tab !== "crew"; $("tab-stats").hidden = tab !== "stats";
+    const list = agentsNow();
+    // detail
+    const d = $("detail"); d.replaceChildren(); const rec = selected && agents.get(selected);
+    d.hidden = !rec;
+    if (rec) { const a = rec.agent, S = STATUS[a.status] || STATUS.idle;
+      d.append(el("div", "role", a.role === "coord" ? "Coordinator · boss desk" : "Agent"), el("h2", null, a.title));
+      const pill = el("span", "pill", S.label); pill.style.background = S.color; pill.style.alignSelf = "flex-start"; d.append(pill);
+      const dl = el("dl"); const row = (k, v) => { dl.append(el("dt", null, k), el("dd", null, v)); };
+      if (a.note) row("Doing", a.note); if (a.updated) row("Last activity", fmtTime(a.updated)); if (a.created) row("Started", fmtTime(a.created)); if (a.model) row("Model", a.model);
+      if (a.ctxUsed && a.ctxMax) { const pct = Math.round(a.ctxUsed / a.ctxMax * 100); dl.append(el("dt", null, "Context used")); const dd = el("dd", null, `${pct}% (${Math.round(a.ctxUsed / 1000)}k of ${Math.round(a.ctxMax / 1000)}k tokens)`); const m = el("div", "meter"); const b = el("b"); b.style.width = Math.min(100, pct) + "%"; m.append(b); dd.append(m); dl.append(dd); }
+      d.append(dl);
+      d.append(el("p", null, (demoOn || !liveOk) ? "This is a demo desk that shows every status." : a.status === "blocked" ? "This agent is waiting for your answer." : "Status refreshes automatically about every 30 seconds."));
+    }
+    // crew list
+    const cl = $("crewList"); cl.replaceChildren();
+    list.forEach(a => { const S = STATUS[a.status] || STATUS.idle; const b = el("button", selected === a.id ? "sel" : ""); b.type = "button";
+      const sw = el("span", "sw"); sw.style.background = a.role === "coord" ? "hsl(22,55%,48%)" : `hsl(${hashHue(a.id)},55%,52%)`;
+      const t = el("span", "t", (a.role === "coord" ? "★ " : "") + a.title); const sm = el("small", null, a.updated ? "active " + fmtTime(a.updated) : (a.note || "")); if (sm.textContent) t.append(sm);
+      const p = el("span", "pill", S.label); p.style.background = S.color; b.append(sw, t, p); b.addEventListener("click", () => select(a.id)); cl.append(b); });
+    // stats
+    const count = s => list.filter(a => a.status === s).length;
+    const ctxSum = list.reduce((n, a) => n + (a.ctxUsed || 0), 0), ctxMax = list.reduce((n, a) => n + (a.ctxMax || 0), 0);
+    const models = {}; list.forEach(a => { if (a.model) models[a.model] = (models[a.model] || 0) + 1; });
+    const top = Object.entries(models).sort((a, b) => b[1] - a[1])[0];
+    const tiles = $("tiles"); tiles.replaceChildren();
+    [["Desks in use", list.length, "coordinator + agents"], ["Working", count("working"), "typing at a desk"], ["Waiting on you", count("blocked"), "in the meeting room"], ["Ready to review", count("review"), "results waiting"],
+     ["Done", count("done") + count("idle"), "relaxing in the lounge"], ["Failed", count("failed"), "in the pantry"],
+     ["Context used", ctxMax ? Math.round(ctxSum / ctxMax * 100) + "%" : "–", ctxMax ? `${Math.round(ctxSum / 1000)}k of ${Math.round(ctxMax / 1000)}k tokens` : "no data yet"],
+     ["Top model", top ? top[0].replace("claude-", "") : "–", top ? `${top[1]} desks` : ""]].forEach(([k, v, e]) => { const t = el("div"); t.append(el("small", null, k), el("strong", null, String(v)), el("em", null, e)); tiles.append(t); });
+    const mb = $("modelBars"); mb.replaceChildren(); const mx = Math.max(1, ...Object.values(models));
+    Object.entries(models).sort((a, b) => b[1] - a[1]).forEach(([m, n]) => { const i = el("i"); i.style.width = (n / mx * 100) + "%"; mb.append(el("span", null, m.replace("claude-", "")), i, el("span", null, n)); });
+    if (!Object.keys(models).length) mb.append(el("span", null, "no data yet"), el("i"), el("span", null, ""));
+    const cb = $("ctxBars"); cb.replaceChildren();
+    list.filter(a => a.ctxUsed && a.ctxMax).forEach(a => { const i = el("i"); i.style.width = Math.min(100, a.ctxUsed / a.ctxMax * 100) + "%"; cb.append(el("span", null, a.title.length > 22 ? a.title.slice(0, 21) + "…" : a.title), i, el("span", null, Math.round(a.ctxUsed / a.ctxMax * 100) + "%")); });
+    if (!cb.children.length) cb.append(el("span", null, "no data yet"), el("i"), el("span", null, ""));
+  }
+
+  // ---- theme: day / night ----
+  const bgDay = new THREE.Color("#cfe3ef"), bgNight = new THREE.Color("#0e1320");
+  function applyTheme() {
+    const attr = document.documentElement.getAttribute("data-theme");
+    const dark = attr === "dark" || (attr !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    scene.background = dark ? bgNight : bgDay; scene.fog = new THREE.Fog(dark ? bgNight : bgDay, dark ? 40 : 60, dark ? 90 : 130);
+    hemi.intensity = dark ? 0.25 : 0.6; hemi.color.set(dark ? "#5a6a9a" : "#bfd8ff"); sun.intensity = dark ? 0.25 : 1.0; sun.color.set(dark ? "#8fa3d8" : "#fff1d6");
+    lamps.forEach(({ head }) => { head.material = dark ? lampOn : mats.white; });
+    renderer.shadowMap.needsUpdate = true;
+  }
+  const lampOn = new THREE.MeshBasicMaterial({ color: "#ffe2a8" });
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+
+  // ---- live data ----
+  const modeChip = $("mode"), modeText = $("modeText"), notice = $("notice");
+  function setMode() { const showingDemo = demoOn || !liveOk; modeChip.className = "chip " + (showingDemo ? "demo" : "live"); modeText.textContent = demoOn ? "Demo" : liveOk ? "Live" : "Demo";
+    $("demoBtn").textContent = demoOn ? "Real team" : "Demo team"; $("demoBtn").hidden = !liveOk && !demoOn; }
+  $("demoBtn").addEventListener("click", () => { demoOn = !demoOn; selected = null; firstLayout = true; setMode(); layout(); });
+  function gotLive(at) { if (!liveOk) firstLayout = true; lastSync = at ? new Date(at) : new Date(); if (isNaN(lastSync)) lastSync = new Date(); $("sync").textContent = "updated " + fmtTime(lastSync.toISOString()); if (!liveOk) { liveOk = true; notice.hidden = true; setMode(); } layout(); }
+  // Status comes from a JSON file (status.json next to this page by default, or ?status=<url>).
+  // Whatever writes that file (a script, a cron job, your agents) drives the office.
+  const STATUS_URL = new URLSearchParams(location.search).get("status") || "status.json";
+  const POLL_MS = 30000;
+  function applyStatusFile(json) {
+    const rows = Array.isArray(json) ? json : (json && json.agents) || [];
+    live.clear();
+    rows.forEach(r => { if (!r || !r.id) return; live.set(String(r.id), { id: String(r.id), role: r.role === "coord" ? "coord" : "thread", title: r.title || (r.role === "coord" ? "Coordinator" : "Untitled agent"), status: normStatus(r.status), note: r.note || "", updated: r.updated, created: r.created, model: r.model || "", ctxUsed: r.ctxUsed, ctxMax: r.ctxMax }); });
+    gotLive(json && json.updatedAt);
+  }
+  let lastBody = null;
+  async function pollStatus() {
+    try {
+      const res = await fetch(STATUS_URL + (STATUS_URL.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      if (text !== lastBody) { lastBody = text; applyStatusFile(JSON.parse(text)); }
+    } catch (e) {
+      if (!liveOk) { notice.textContent = `Could not read ${STATUS_URL} (${e.message}). Showing the demo team instead.`; notice.hidden = false; setMode(); }
+    }
+    setTimeout(pollStatus, POLL_MS);
+  }
+  function startLive() { setMode(); pollStatus(); }
+
+  // ---- animation loop ----
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const v = new THREE.Vector3(); const clock = new THREE.Clock(); let last = 0, frame = 0, slowFor = 0, rafId = 0;
+  function lowerQuality() { if (quality === "low") return; quality = "low"; renderer.setPixelRatio(1); renderer.shadowMap.enabled = false; scene.traverse(o => { if (o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; }); }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { cancelAnimationFrame(rafId); rafId = 0; } else if (!rafId) { clock.getDelta(); last = clock.getElapsedTime(); rafId = requestAnimationFrame(tick); } });
+  function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; if (w < 640) { orbit.r = Math.max(orbit.r, 64); orbit.phi = Math.min(orbit.phi, 0.8); } camera.updateProjectionMatrix(); }
+  window.addEventListener("resize", resize);
+  const lerpAngle = (a, b, t) => { let d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI; return a + d * t; };
+  function tick() {
+    const t = clock.getElapsedTime(), dt = Math.min(0.1, t - last); last = t; frame++; placeCamera();
+    if (dt > 0.034) { slowFor += dt; if (slowFor > 2) lowerQuality(); } else slowFor = Math.max(0, slowFor - dt * 0.5);
+    const doLabels = frame % 2 === 0;
+    let relayout = false;
+    for (const rec of agents.values()) {
+      const f = rec.fig, g = f.g, k = reduce ? 0 : 1, p = f.phase + t;
+      const dx = rec.target.x - g.position.x, dz = rec.target.z - g.position.z, dist = Math.hypot(dx, dz);
+      const walking = dist > 0.08;
+      if (walking) { const step = Math.min(dist, (reduce ? 50 : 3.2) * dt); g.position.x += dx / dist * step; g.position.z += dz / dist * step; rec.cur.ry = lerpAngle(rec.cur.ry, Math.atan2(dx, dz), 0.2); }
+      else rec.cur.ry = lerpAngle(rec.cur.ry, rec.target.ry, 0.15);
+      g.rotation.y = rec.cur.ry; g.position.y = 0.2;
+      f.legL.rotation.x = f.legR.rotation.x = 0; f.armL.rotation.set(0, 0, 0); f.armR.rotation.set(0, 0, 0); f.head.rotation.set(0, 0, 0); f.body.position.y = 0.85; f.body.rotation.x = 0;
+      const pose = walking ? "walk" : rec.poseTarget;
+      if (pose === "walk") { const s = Math.sin(p * 9) * 0.6 * k; f.legL.rotation.x = s; f.legR.rotation.x = -s; f.armL.rotation.x = -s * 0.7; f.armR.rotation.x = s * 0.7; }
+      else if (pose === "type") { f.armL.rotation.x = -1.2 + Math.sin(p * 14) * 0.15 * k; f.armR.rotation.x = -1.2 + Math.sin(p * 14 + 1.5) * 0.15 * k; f.head.rotation.x = 0.1 + Math.sin(p * 1.2) * 0.04 * k; f.legL.rotation.x = f.legR.rotation.x = -1.4; g.position.y = 0.2 - 0.25; }
+      else if (pose === "review") { f.armL.rotation.x = -1.0; f.armR.rotation.x = -0.6; f.armR.rotation.z = 0.5; f.body.rotation.x = -0.15; f.head.rotation.y = Math.sin(p * 0.8) * 0.3 * k; f.legL.rotation.x = f.legR.rotation.x = -1.4; g.position.y = -0.05; }
+      else if (pose === "wave") { f.armR.rotation.z = 2.8 + Math.sin(p * 6) * 0.3 * k; f.armL.rotation.x = -0.4; g.position.y = 0.2 + Math.abs(Math.sin(p * 3)) * 0.05 * k; }
+      else if (pose === "slump") { f.head.rotation.x = 0.45; f.armL.rotation.x = -1.4; f.armR.rotation.x = -0.3; f.body.rotation.x = 0.1 + Math.sin(p * 2) * 0.03 * k; }
+      else if (pose === "sit") { f.legL.rotation.x = f.legR.rotation.x = -1.5; g.position.y = -0.03; f.armL.rotation.x = -0.4; f.armR.rotation.x = -0.4; f.head.rotation.y = Math.sin(p * 0.5) * 0.4 * k; }
+      else if (pose === "pong") { f.armR.rotation.x = -1.2 + Math.sin(p * 5) * 0.9 * k; f.armR.rotation.z = -0.4; g.position.x += Math.sin(p * 2.5) * 0.004 * k; }
+      else if (pose === "arcade") { f.armL.rotation.x = -1.3 + Math.sin(p * 11) * 0.1 * k; f.armR.rotation.x = -1.3 + Math.cos(p * 13) * 0.1 * k; f.head.rotation.x = 0.1; }
+      else { f.head.rotation.y = Math.sin(p * 0.6) * 0.5 * k; f.armL.rotation.x = 0.1; }
+      if (f.bubble.visible) f.bubble.position.y = 2.1 + Math.sin(p * 2.2) * 0.06 * k;
+      if (rec.idleSpot) { rec.idleTimer -= dt; if (rec.idleTimer <= 0 && !walking) relayout = true; }
+      // label
+      if (!doLabels) continue;
+      g.updateMatrixWorld(); v.set(0, 2.5, 0).applyMatrix4(g.matrixWorld).project(camera);
+      const vis = v.z < 1; rec.lbl.hidden = !vis;
+      if (vis) { rec.lbl.style.left = ((v.x + 1) / 2 * stage.clientWidth) + "px"; rec.lbl.style.top = ((1 - v.y) / 2 * stage.clientHeight) + "px"; rec.lbl.classList.toggle("far", orbit.r > 48); }
+    }
+    for (const e of extras) { const p = e.phase + t; e.armR.rotation.x = -0.8 + Math.sin(p * 2) * 0.3; e.head.rotation.y = Math.sin(p * 0.4) * 0.5; }
+    if (relayout) layout();
+    if (renderer.shadowMap.enabled && frame % 3 === 0) renderer.shadowMap.needsUpdate = true;
+    renderer.render(scene, camera); rafId = requestAnimationFrame(tick);
+  }
+  resize(); applyTheme(); layout(); setMode(); rafId = requestAnimationFrame(tick); startLive();
+})();
+</script>
+
+</body></html>
